@@ -24,7 +24,7 @@ from f5_tts.model.utils import seed_everything
 class F5TTS:
     def __init__(
         self,
-        model_type="F5-TTS",
+        model_type="E2-TTS",
         ckpt_file="",
         vocab_file="",
         ode_method="euler",
@@ -90,7 +90,7 @@ class F5TTS:
         show_info=print,
         progress=tqdm,
         target_rms=0.1,
-        cross_fade_duration=0.15,
+        cross_fade_duration=1,
         sway_sampling_coef=-1,
         cfg_strength=2,
         nfe_step=32,
@@ -140,11 +140,11 @@ if __name__ == "__main__":
     f5tts = F5TTS()
 
     wav, sr, spect = f5tts.infer(
-        ref_file=str(files("f5_tts").joinpath("infer/examples/basic/basic_ref_en.wav")),
+        ref_file=str(files("f5_tts").joinpath(r"C:\Users\Sangr\Desktop\aimodel\toji.mp3")),
         ref_text="some call me nature, others call me mother nature.",
-        gen_text="""I don't really care what you call me. I've been a silent spectator, watching species evolve, empires rise and fall. But always remember, I am mighty and enduring. Respect me and I'll nurture you; ignore me and you shall face the consequences.""",
-        file_wave=str(files("f5_tts").joinpath("../../tests/api_out.wav")),
-        file_spect=str(files("f5_tts").joinpath("../../tests/api_out.png")),
+        gen_text="""I don't really care what you call me. """,
+        file_wave=str(files("f5_tts").joinpath("api_out.wav")),
+        file_spect=str(files("f5_tts").joinpath("api_out.png")),
         seed=-1,  # random seed = -1
     )
 

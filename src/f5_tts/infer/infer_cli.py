@@ -81,6 +81,8 @@ parser.add_argument(
     default=1.0,
     help="Adjust the speed of the audio generation (default: 1.0)",
 )
+parser.add_argument("--cross_fade_duration", type=float, default=0.2, help="Cross-fade duration in seconds")
+parser.add_argument("--fix_duration", type=float, default=None, help="Set a fixed duration for generated audio in seconds")
 args = parser.parse_args()
 
 config = tomli.load(open(args.config, "rb"))
@@ -89,6 +91,8 @@ ref_audio = args.ref_audio if args.ref_audio else config["ref_audio"]
 ref_text = args.ref_text if args.ref_text != "666" else config["ref_text"]
 gen_text = args.gen_text if args.gen_text else config["gen_text"]
 gen_file = args.gen_file if args.gen_file else config["gen_file"]
+fix_duration = args.fix_duration if args.fix_duration else config["fix_duration"]
+cross_fade_duration = args.cross_fade_duration if args.fix_duration else config["cross_fade_duration"]
 
 # patches for pip pkg user
 if "infer/examples/" in ref_audio:
@@ -157,8 +161,10 @@ print(f"Using {model}...")
 ema_model = load_model(model_cls, model_cfg, ckpt_file, mel_spec_type=args.vocoder_name, vocab_file=vocab_file)
 
 
-def main_process(ref_audio, ref_text, text_gen, model_obj, mel_spec_type, remove_silence, speed):
+def main_process(ref_audio, ref_text, text_gen, model_obj, mel_spec_type, cross_fade_duration, fix_duration, remove_silence, speed):
     main_voice = {"ref_audio": ref_audio, "ref_text": ref_text}
+    cross_fade_duration = cross_fade_duration
+    fix_duration = fix_duration
     if "voices" not in config:
         voices = {"main": main_voice}
     else:
@@ -213,7 +219,7 @@ def main_process(ref_audio, ref_text, text_gen, model_obj, mel_spec_type, remove
 
 
 def main():
-    main_process(ref_audio, ref_text, gen_text, ema_model, mel_spec_type, remove_silence, speed)
+    main_process(ref_audio, fix_duration,cross_fade_duration,  ref_text, gen_text, ema_model, mel_spec_type, remove_silence, speed)
 
 
 if __name__ == "__main__":
