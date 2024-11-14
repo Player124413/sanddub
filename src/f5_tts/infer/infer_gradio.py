@@ -712,7 +712,7 @@ If you're having issues, try converting your reference audio to WAV or MP3, clip
 @click.option(
     "--share",
     "-s",
-    default=False,
+    default=True,
     is_flag=True,
     help="Share the app via Gradio share link",
 )
@@ -720,7 +720,7 @@ If you're having issues, try converting your reference audio to WAV or MP3, clip
 def main(port, host, share, api):
     global app
     print("Starting app...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=share, show_api=api)
+    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
 
 
 if __name__ == "__main__":
