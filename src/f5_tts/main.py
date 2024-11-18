@@ -1,184 +1,79 @@
-#----------------dependancy -----------
-
-import random
-import sys
-from importlib.resources import files
-
-import soundfile as sf
-import torch
-import tqdm
-from cached_path import cached_path
 import json
-import numpy as np
-from datetime import datetime
+import subprocess
+import os
+from pydub import AudioSegment  # You may need to install this library
+import random
 
+# Load the JSON file
+json_file_path = r"/home/sangram/Desktop/aimodel/F5-TTS/src/f5_tts/infer/s.json"
+with open(json_file_path, "r", encoding="utf-8") as f:
+    data = json.load(f)
 
-from f5_tts.infer.utils_infer import (
-    hop_length,
-    infer_process,
-    load_model,
-    load_vocoder,
-    preprocess_ref_audio_text,
-    remove_silence_for_generated_wav,
-    save_spectrogram,
-    target_sample_rate,
-)
-from f5_tts.model import DiT, UNetT
-from f5_tts.model.utils import seed_everything
+# Safely fetch a value from a dictionary with a default
+def safe_get(dialogue, key, default=None):
+    value = dialogue.get(key)
+    return value if value not in [None, ""] else default
 
+# Construct CLI command from JSON
+def build_command(dialogue, index):
+    base_command = ["f5-tts_infer-cli"]
+    args = {
+        "--model": "F5-TTS",
+        "--ref_audio": safe_get(dialogue, "ref_audio", ""),
+        "--ref_text": safe_get(dialogue, "ref_text", ""),
+        "--gen_text": safe_get(dialogue, "text", ""),
+        "--speed": safe_get(dialogue, "speed", 1.0),
+        "--output_dir": f"output_{index}.wav",
+    }
 
-class F5TTS:
-    def __init__(
-        self,
-        model_type="F5-TTS",
-        ckpt_file="",
-        vocab_file="",
-        ode_method="euler",
-        use_ema=True,
-        vocoder_name="vocos",
-        local_path=None,
-        device=None,
-    ):
-        # Initialize parameters
-        self.final_wave = None
-        self.target_sample_rate = target_sample_rate
-        self.hop_length = hop_length
-        self.seed = -1
-        self.mel_spec_type = vocoder_name
+    # Add each argument and wrap values in double quotes
+    for key, value in args.items():
+        if value not in [None, ""]:  # Skip arguments with None or empty values
+            base_command.append(f"{key} \"{value}\"")
 
-        # Set device
-        self.device = device or (
-            "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
-        )
+    return " ".join(base_command)
 
-        # Load models
-        self.load_vocoder_model(vocoder_name, local_path)
-        self.load_ema_model(model_type, ckpt_file, vocoder_name, vocab_file, ode_method, use_ema)
+# Placeholder function to calculate similarity between two audio files
+def calculate_similarity(audio1_path, audio2_path):
+    # For simplicity, this uses random values as similarity scores.
+    # Replace this with actual logic (e.g., feature comparison).
+    return random.uniform(80, 100)
 
-    def load_vocoder_model(self, vocoder_name, local_path):
-        self.vocoder = load_vocoder(vocoder_name, local_path is not None, local_path, self.device)
+# Process each dialogue entry
+commands = []
+output_files = []
 
-    def load_ema_model(self, model_type, ckpt_file, mel_spec_type, vocab_file, ode_method, use_ema):
-        if model_type == "F5-TTS":
-            if not ckpt_file:
-                if mel_spec_type == "vocos":
-                    ckpt_file = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base/model_1200000.safetensors"))
-                elif mel_spec_type == "bigvgan":
-                    ckpt_file = str(cached_path("hf://SWivid/F5-TTS/F5TTS_Base_bigvgan/model_1250000.pt"))
-            model_cfg = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
-            model_cls = DiT
-        elif model_type == "E2-TTS":
-            if not ckpt_file:
-                ckpt_file = str(cached_path("hf://SWivid/E2-TTS/E2TTS_Base/model_1200000.safetensors"))
-            model_cfg = dict(dim=1024, depth=24, heads=16, ff_mult=4)
-            model_cls = UNetT
+for index, dialogue in enumerate(data.get("dialogues", [])):
+    output_file = f"output_{index}.wav"
+    ref_audio = safe_get(dialogue, "ref_audio", "")
+    success = False
+    retries = 3  # Max attempts to regenerate audio
+    
+    while not success and retries > 0:
+        command = build_command(dialogue, index)
+        print(f"Executing: {command}")
+        result = subprocess.run(command, shell=True)
+        
+        if result.returncode == 0 and os.path.exists(output_file):
+            similarity = calculate_similarity(output_file, ref_audio)
+            print(f"Similarity for chunk {index}: {similarity}%")
+            
+            if similarity >= 93:
+                success = True
+                output_files.append(output_file)
+            else:
+                print(f"Chunk {index} similarity below threshold. Regenerating...")
+                retries -= 1
         else:
-            raise ValueError(f"Unknown model type: {model_type}")
+            print(f"Error executing command for chunk {index}.")
+            break
 
-        self.ema_model = load_model(
-            model_cls, model_cfg, ckpt_file, mel_spec_type, vocab_file, ode_method, use_ema, self.device
-        )
-
-    def export_wav(self, wav, file_wave, remove_silence=False):
-        sf.write(file_wave, wav, self.target_sample_rate)
-
-        if remove_silence:
-            remove_silence_for_generated_wav(file_wave)
-
-    def export_spectrogram(self, spect, file_spect):
-        save_spectrogram(spect, file_spect)
-
-    def infer(
-        self,
-        ref_file,
-        ref_text,
-        gen_text,
-        show_info=print,
-        progress=tqdm,
-        target_rms=0.1,
-        cross_fade_duration=0.15,
-        sway_sampling_coef=-1,
-        cfg_strength=2,
-        nfe_step=32,
-        speed=1.0,
-        fix_duration=None,
-        remove_silence=False,
-        file_wave=None,
-        file_spect=None,
-        seed=-1,
-    ):
-        if seed == -1:
-            seed = random.randint(0, sys.maxsize)
-        seed_everything(seed)
-        self.seed = seed
-
-        ref_file, ref_text = preprocess_ref_audio_text(ref_file, ref_text, device=self.device)
-
-        wav, sr, spect = infer_process(
-            ref_file,
-            ref_text,
-            gen_text,
-            self.ema_model,
-            self.vocoder,
-            self.mel_spec_type,
-            show_info=show_info,
-            progress=progress,
-            target_rms=target_rms,
-            cross_fade_duration=cross_fade_duration,
-            nfe_step=nfe_step,
-            cfg_strength=cfg_strength,
-            sway_sampling_coef=sway_sampling_coef,
-            speed=speed,
-            fix_duration=fix_duration,
-            device=self.device,
-        )
-
-        if file_wave is not None:
-            self.export_wav(wav, file_wave, remove_silence)
-
-        if file_spect is not None:
-            self.export_spectrogram(spect, file_spect)
-
-        return wav, sr, spect
-
-#----------------dependancy -----------
-
-if __name__ == "__main__":
-    f5tts = F5TTS()
-
-    # Load JSON data from the file
-with open("input.json", "r") as file:
-    json_data = json.load(file)
-
-# Initialize list to hold individual audio segments
-audio_segments = []
-
-# Process each entry in the JSON data
-for entry in json_data:
-    # Parse start and end times to calculate fix_duration
-    start_time = datetime.strptime(entry["start_time"], "%M:%S")
-    end_time = datetime.strptime(entry["end_time"], "%M:%S")
-    fix_duration = (end_time - start_time).total_seconds()
-
-    # Run inference for each entry
-    wav, sr, spect = f5tts.infer(
-        ref_file=str(files("f5_tts").joinpath("infer/examples/basic/basic_ref_en.wav")),
-        ref_text="some call me nature, others call me mother nature.",
-        gen_text=entry["text"],
-        speed=entry["speed"],
-        cross_fade_duration=entry["cross_fade_duration"],
-        fix_duration=fix_duration,
-        # Use None for file_wave and file_spect since we don't need to save individual files
-    )
-
-    # Adjust volume if necessary
-    volume_adjusted_wav = wav * (10 ** (entry["volume"] / 20))
-    audio_segments.append(volume_adjusted_wav)
-
-# Combine all audio segments into one continuous audio array
-combined_audio = np.concatenate(audio_segments)
-
-# Save the combined audio output
-sf.write("final_output.wav", combined_audio, sr)
-
-print("Processing complete. Combined audio saved as final_output.wav.")
+if all(os.path.exists(file) for file in output_files):
+    # Combine all audio files
+    with open("concat.txt", "w") as f:
+        for file in output_files:
+            f.write(f"file '{file}'\n")
+    combine_command = "ffmpeg -f concat -safe 0 -i concat.txt -c copy output.wav"
+    subprocess.run(combine_command, shell=True)
+else:
+    print("Some output files are missing or failed to meet the similarity threshold. Combination skipped.")
