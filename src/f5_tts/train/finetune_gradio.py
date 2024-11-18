@@ -1814,7 +1814,7 @@ Reduce the model size from 5GB to 1.3GB. The new checkpoint can be used for infe
 def main(port, host, share, api):
     global app
     print("Starting app...")
-    app.queue(api_open=api).launch(server_name=host, server_port=port, share=True, show_api=api)
+    app.queue(api_open=api).launch(server_name=host, server_port=port, share=False, show_api=api)
 
 
 if __name__ == "__main__":
