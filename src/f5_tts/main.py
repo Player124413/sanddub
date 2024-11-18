@@ -1,11 +1,12 @@
 import json
 import subprocess
 import os
-from pydub import AudioSegment  # You may need to install this library
+import shutil
+from pydub import AudioSegment
 import random
 
 # Load the JSON file
-json_file_path = r"/home/sangram/Desktop/aimodel/F5-TTS/src/f5_tts/infer/s.json"
+json_file_path = r"/content/s.json"
 with open(json_file_path, "r", encoding="utf-8") as f:
     data = json.load(f)
 
@@ -15,7 +16,7 @@ def safe_get(dialogue, key, default=None):
     return value if value not in [None, ""] else default
 
 # Construct CLI command from JSON
-def build_command(dialogue, index):
+def build_command(dialogue, index, output_dir):
     base_command = ["f5-tts_infer-cli"]
     args = {
         "--model": "F5-TTS",
@@ -23,57 +24,83 @@ def build_command(dialogue, index):
         "--ref_text": safe_get(dialogue, "ref_text", ""),
         "--gen_text": safe_get(dialogue, "text", ""),
         "--speed": safe_get(dialogue, "speed", 1.0),
-        "--output_dir": f"output_{index}.wav",
+        "--output_dir": output_dir,
     }
 
-    # Add each argument and wrap values in double quotes
     for key, value in args.items():
-        if value not in [None, ""]:  # Skip arguments with None or empty values
-            base_command.append(f"{key} \"{value}\"")
+        if value not in [None, ""]:
+            base_command.append(f'{key} "{value}"')
 
     return " ".join(base_command)
 
 # Placeholder function to calculate similarity between two audio files
 def calculate_similarity(audio1_path, audio2_path):
-    # For simplicity, this uses random values as similarity scores.
-    # Replace this with actual logic (e.g., feature comparison).
+    # Replace with actual audio comparison logic
     return random.uniform(80, 100)
 
+# Remove file or directory
+def remove_path(path):
+    if os.path.isdir(path):
+        shutil.rmtree(path)
+    elif os.path.exists(path):
+        os.remove(path)
+
 # Process each dialogue entry
-commands = []
+output_dir = "outputs"
+os.makedirs(output_dir, exist_ok=True)
+
 output_files = []
 
 for index, dialogue in enumerate(data.get("dialogues", [])):
-    output_file = f"output_{index}.wav"
+    temp_output_file = os.path.join(output_dir, "infer_cli_out.wav")
+    final_output_file = os.path.join(output_dir, f"infer_cli_{index}.wav")
     ref_audio = safe_get(dialogue, "ref_audio", "")
     success = False
-    retries = 3  # Max attempts to regenerate audio
-    
-    while not success and retries > 0:
-        command = build_command(dialogue, index)
+    attempt = 1
+
+    while not success:
+        print(f"Chunk {index}: Attempt {attempt} - Regenerating...")
+        command = build_command(dialogue, index, output_dir)
         print(f"Executing: {command}")
-        result = subprocess.run(command, shell=True)
-        
-        if result.returncode == 0 and os.path.exists(output_file):
-            similarity = calculate_similarity(output_file, ref_audio)
-            print(f"Similarity for chunk {index}: {similarity}%")
-            
+
+        # Clean up the temporary output file
+        remove_path(temp_output_file)
+        remove_path(final_output_file)
+
+        # Execute the command
+        result = subprocess.run(command, shell=True, stderr=subprocess.PIPE, stdout=subprocess.PIPE)
+
+        if result.returncode == 0 and os.path.exists(temp_output_file):
+            # Rename the output file for easier identification
+            os.rename(temp_output_file, final_output_file)
+            print(f"Chunk {index}: Renamed output to {final_output_file}")
+
+            similarity = calculate_similarity(final_output_file, ref_audio)
+            print(f"Chunk {index}: Similarity = {similarity}%")
+
             if similarity >= 93:
                 success = True
-                output_files.append(output_file)
+                output_files.append(final_output_file)
+                print(f"Chunk {index} passed similarity check.")
             else:
-                print(f"Chunk {index} similarity below threshold. Regenerating...")
-                retries -= 1
+                print(f"Chunk {index}: Similarity below threshold ({similarity}%). Retrying...")
+                remove_path(final_output_file)
         else:
-            print(f"Error executing command for chunk {index}.")
+            print(f"Error in processing chunk {index}:")
+            print(f"Return Code: {result.returncode}")
+            print(f"Stdout: {result.stdout.decode()}")
+            print(f"Stderr: {result.stderr.decode()}")
             break
 
-if all(os.path.exists(file) for file in output_files):
-    # Combine all audio files
-    with open("concat.txt", "w") as f:
-        for file in output_files:
-            f.write(f"file '{file}'\n")
-    combine_command = "ffmpeg -f concat -safe 0 -i concat.txt -c copy output.wav"
-    subprocess.run(combine_command, shell=True)
+        attempt += 1
+
+# Combine all successful output files
+if output_files:
+    combined_audio = AudioSegment.empty()
+    for file in output_files:
+        combined_audio += AudioSegment.from_file(file)
+
+    combined_audio.export("output.wav", format="wav")
+    print("Combined audio saved as output.wav")
 else:
-    print("Some output files are missing or failed to meet the similarity threshold. Combination skipped.")
+    print("No audio chunks generated successfully. Combination skipped.")
