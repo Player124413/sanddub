@@ -219,7 +219,7 @@ class Slicer:  # https://github.com/RVC-Boss/GPT-SoVITS/blob/main/tools/slicer2.
     def __init__(
         self,
         sr: int,
-        threshold: float = -40.0,
+        threshold: float = -30.0,
         min_length: int = 2000,
         min_interval: int = 300,
         hop_size: int = 20,
